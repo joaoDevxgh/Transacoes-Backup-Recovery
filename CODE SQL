@@ -1,0 +1,219 @@
+-- PARTE 0 – LIMPEZA E CRIAÇÃO DO BANCO DE DADOS
+DROP DATABASE IF EXISTS ecommerce;
+CREATE DATABASE ecommerce;
+USE ecommerce;
+
+-- CRIAÇÃO DAS TABELAS
+
+CREATE TABLE clients (
+    idClient INT AUTO_INCREMENT PRIMARY KEY,
+    Fname VARCHAR(15) NOT NULL,
+    Minit CHAR(3),
+    Lname VARCHAR(15) NOT NULL,
+    CPF CHAR(11) NOT NULL UNIQUE,
+    Address VARCHAR(100) NOT NULL
+);
+
+CREATE TABLE products (
+    idProduct INT AUTO_INCREMENT PRIMARY KEY,
+    pname VARCHAR(100) NOT NULL,
+    classification_kids BOOLEAN DEFAULT FALSE,
+    category ENUM('eletronico','vestimenta','brinquedos','alimentos','moveis') NOT NULL,
+    rating FLOAT DEFAULT 0,
+    size VARCHAR(10)
+);
+
+CREATE TABLE orders (
+    idOrder INT AUTO_INCREMENT PRIMARY KEY,
+    idClient INT NOT NULL,
+    orderStatus ENUM('confirmado','cancelado','em processamento') DEFAULT 'em processamento',
+    orderDescription VARCHAR(255),
+    shippingValue FLOAT DEFAULT 10,
+    paymentCash BOOLEAN DEFAULT FALSE,
+    FOREIGN KEY (idClient) REFERENCES clients(idClient)
+);
+
+CREATE TABLE payments (
+    idPayment INT AUTO_INCREMENT PRIMARY KEY,
+    idClient INT NOT NULL,
+    typePayment ENUM('cash','debit','credit','pix') NOT NULL,
+    limitAvailable FLOAT,
+    FOREIGN KEY (idClient) REFERENCES clients(idClient)
+);
+
+CREATE TABLE productStorage (
+    idProdStorage INT AUTO_INCREMENT PRIMARY KEY,
+    storageLocation VARCHAR(255) NOT NULL,
+    quantity INT DEFAULT 0
+);
+
+CREATE TABLE suppliers (
+    idSupplier INT AUTO_INCREMENT PRIMARY KEY,
+    socialName VARCHAR(255) NOT NULL,
+    CNPJ CHAR(14) NOT NULL UNIQUE,
+    contact CHAR(11) NOT NULL
+);
+
+CREATE TABLE sellers (
+    idSeller INT AUTO_INCREMENT PRIMARY KEY,
+    socialName VARCHAR(255) NOT NULL,
+    abstName VARCHAR(255),
+    CNPJ CHAR(14) UNIQUE,
+    CPF CHAR(11) UNIQUE,
+    location VARCHAR(255),
+    contact CHAR(11) NOT NULL
+);
+
+CREATE TABLE productSeller (
+    idSeller INT NOT NULL,
+    idProduct INT NOT NULL,
+    prodQuantity INT DEFAULT 1,
+    PRIMARY KEY (idSeller, idProduct),
+    FOREIGN KEY (idSeller) REFERENCES sellers(idSeller),
+    FOREIGN KEY (idProduct) REFERENCES products(idProduct)
+);
+
+CREATE TABLE productOrder (
+    idProduct INT NOT NULL,
+    idOrder INT NOT NULL,
+    poQuantity INT DEFAULT 1,
+    poStatus ENUM('disponivel', 'sem estoque') DEFAULT 'disponivel',
+    PRIMARY KEY (idProduct, idOrder),
+    FOREIGN KEY (idProduct) REFERENCES products(idProduct),
+    FOREIGN KEY (idOrder) REFERENCES orders(idOrder)
+);
+
+CREATE TABLE productStorageLocation (
+    idProduct INT NOT NULL,
+    idStorage INT NOT NULL,
+    location VARCHAR(255) NOT NULL,
+    PRIMARY KEY (idProduct, idStorage),
+    FOREIGN KEY (idProduct) REFERENCES products(idProduct),
+    FOREIGN KEY (idStorage) REFERENCES productStorage(idProdStorage)
+);
+
+CREATE TABLE productSupplier (
+    idSupplier INT NOT NULL,
+    idProduct INT NOT NULL,
+    quantity INT NOT NULL,
+    PRIMARY KEY (idSupplier, idProduct),
+    FOREIGN KEY (idSupplier) REFERENCES suppliers(idSupplier),
+    FOREIGN KEY (idProduct) REFERENCES products(idProduct)
+);
+
+-- PARTE 1 – TRANSAÇÃO MANUAL
+SET autocommit = 0;
+START TRANSACTION;
+
+INSERT INTO clients (Fname, Minit, Lname, CPF, Address)
+VALUES ('João', 'M', 'Souza', '12345678901', 'Rua das Palmeiras, 100');
+
+INSERT INTO orders (idClient, orderStatus, orderDescription, shippingValue, paymentCash)
+VALUES (LAST_INSERT_ID(), 'confirmado', 'Pedido de teste via transação', 25.00, TRUE);
+
+COMMIT;
+
+-- PARTE 2 – PROCEDURE COM CONTROLE DE ERRO
+DELIMITER $$
+
+CREATE PROCEDURE sp_novo_pedido_transacao (
+    IN p_Fname VARCHAR(15),
+    IN p_Minit CHAR(3),
+    IN p_Lname VARCHAR(15),
+    IN p_CPF CHAR(11),
+    IN p_Address VARCHAR(100),
+    IN p_orderDescription VARCHAR(255),
+    IN p_shippingValue FLOAT,
+    IN p_paymentCash BOOLEAN
+)
+BEGIN
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        SELECT 'ERRO: A transação foi revertida por falha!' AS Mensagem;
+    END;
+
+    START TRANSACTION;
+
+    INSERT INTO clients (Fname, Minit, Lname, CPF, Address)
+    VALUES (p_Fname, p_Minit, p_Lname, p_CPF, p_Address);
+
+    INSERT INTO orders (idClient, orderStatus, orderDescription, shippingValue, paymentCash)
+    VALUES (LAST_INSERT_ID(), 'em processamento', p_orderDescription, p_shippingValue, p_paymentCash);
+
+    COMMIT;
+    SELECT 'SUCESSO: Transação concluída com sucesso!' AS Mensagem;
+END$$
+
+DELIMITER ;
+
+-- EXECUÇÃO DA PROCEDURE
+CALL sp_novo_pedido_transacao('Maria', 'A', 'Lima', '98765432100', 'Av. Central, 200', 'Pedido via procedure', 19.90, TRUE);
+
+-- PARTE 3 – BACKUP E RECOVERY (LINHA DE COMANDO)
+-- Para criar o backup:
+-- mysqldump -u root -p ecommerce > ecommerce_backup.sql
+
+-- Para restaurar:
+-- mysql -u root -p ecommerce < ecommerce_backup.sql
+
+-- CONSULTAS ÚTEIS
+SELECT * FROM clients;
+SELECT * FROM products;
+SELECT * FROM orders;
+
+SELECT * FROM clients WHERE Lname = 'Silva';
+SELECT * FROM products WHERE category = 'eletronico';
+SELECT * FROM orders WHERE orderStatus = 'confirmado';
+
+SELECT 
+    CONCAT(Fname, ' ', IFNULL(Minit, ''), ' ', Lname) AS fullName,
+    CPF,
+    Address
+FROM clients;
+
+SELECT 
+    pname,
+    rating,
+    (rating + 1) AS adjustedRating,
+    (shippingValue + 10) AS totalShipping
+FROM products
+JOIN productOrder ON products.idProduct = productOrder.idProduct
+JOIN orders ON productOrder.idOrder = orders.idOrder;
+
+SELECT * FROM products ORDER BY rating DESC;
+SELECT * FROM clients ORDER BY Lname ASC;
+
+SELECT 
+    idClient,
+    COUNT(idOrder) AS totalOrders
+FROM orders
+GROUP BY idClient
+HAVING totalOrders > 1;
+
+SELECT 
+    idSeller,
+    SUM(prodQuantity) AS totalSold
+FROM productSeller
+GROUP BY idSeller
+HAVING totalSold > 10;
+
+SELECT 
+    orders.idOrder,
+    CONCAT(c.Fname, ' ', IFNULL(c.Minit, ''), ' ', c.Lname) AS fullName,
+    orders.orderStatus,
+    orders.orderDescription
+FROM orders
+JOIN clients c ON orders.idClient = c.idClient;
+
+SELECT 
+    CONCAT(c.Fname, ' ', IFNULL(c.Minit, ''), ' ', c.Lname) AS fullName,
+    o.idOrder,
+    p.pname,
+    po.poQuantity,
+    o.orderStatus
+FROM orders o
+JOIN clients c ON o.idClient = c.idClient
+JOIN productOrder po ON o.idOrder = po.idOrder
+JOIN products p ON po.idProduct = p.idProduct
+ORDER BY fullName, o.idOrder;
